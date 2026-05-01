@@ -1,20 +1,22 @@
 name = "flickreels-clone"
+main = "worker.ts"
 compatibility_date = "2024-03-29"
 
-# Jika Anda men-deploy ke Cloudflare Workers/Pages, 
-# variabel-variabel lingkungan yang sebelumnya ada di .env 
-# (kecuali secret) bisa diletakkan di bagian [vars]
+# Konfigurasi frontend assets 
+[assets]
+directory = "./dist"
+binding = "ASSETS"
+
+# Simpan data user dan setting di Cloudflare KV
+[[kv_namespaces]]
+binding = "DATA_KV"
+id = "GANTI_DENGAN_KV_NASESPACE_ID_ANDA"
+
+# Simpan upload file QR di Cloudflare R2
+[[r2_buckets]]
+binding = "QR_BUCKET"
+bucket_name = "flickreels-bucket"
+
 [vars]
-R2_BUCKET_NAME = "flickreels-bucket"
-# R2_ENDPOINT = "https://<account-id>.r2.cloudflarestorage.com"
+# Optional, buka R2 agar bisa diakses public:
 # R2_PUBLIC_URL = "https://pub-<id>.r2.dev"
-
-# Secret variables seperti R2_ACCESS_KEY_ID & R2_SECRET_ACCESS_KEY 
-# bisa diatur via command line saat deploy:
-# npx wrangler secret put R2_ACCESS_KEY_ID
-# npx wrangler secret put R2_SECRET_ACCESS_KEY
-
-# ATAU jika menggunakan Native R2 Binding Cloudflare:
-# [[r2_buckets]]
-# binding = "QR_BUCKET"
-# bucket_name = "flickreels-bucket"
