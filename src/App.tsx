@@ -1,6 +1,6 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState, useMemo } from 'react';
 import Hls from 'hls.js';
-import { Film, Play, Star, ChevronLeft, Info, AlertTriangle, Loader2, Download, ListVideo, Search, Home, LayoutGrid, User } from 'lucide-react';
+import { Film, Play, Star, ChevronLeft, Info, AlertTriangle, Loader2, Download, ListVideo, Search, Home, LayoutGrid, User, Lock } from 'lucide-react';
 import { cn } from './lib/utils';
 
 import Profile from './Profile';
@@ -12,6 +12,7 @@ type Drama = {
   playlet_id: string;
   title: string;
   thumbnail: string;
+  category?: string;
 };
 
 type Episode = {
@@ -41,6 +42,7 @@ export default function App() {
   // User Auth State
   const [user, setUser] = useState<any>(null);
   const [showLoginModal, setShowLoginModal] = useState(false);
+  const [showLockModal, setShowLockModal] = useState(false);
   const [loginName, setLoginName] = useState('');
   const [qrCodePath, setQrCodePath] = useState('');
   const [isAdminRoute, setIsAdminRoute] = useState(false);
@@ -112,19 +114,16 @@ export default function App() {
   const videoRef = useRef<HTMLVideoElement>(null);
   const hlsRef = useRef<Hls | null>(null);
 
-  // Categories Dummy Data based on Flickreels
-  const categories = [
-    { name: "Romance", count: 124 },
-    { name: "CEO / Billionaire", count: 85 },
-    { name: "Revenge", count: 62 },
-    { name: "Time Travel", count: 48 },
-    { name: "Flash Marriage", count: 71 },
-    { name: "Feel-Good", count: 39 },
-    { name: "Chinese Drama", count: 156 },
-    { name: "Movie Guides", count: 32 },
-  ];
+  // Compute categories based on fetched data
+  const dynamicCategories = useMemo(() => {
+    const counts: Record<string, number> = {};
+    dramas.forEach(d => {
+      const cat = d.category || 'Lainnya';
+      counts[cat] = (counts[cat] || 0) + 1;
+    });
+    return Object.entries(counts).map(([name, count]) => ({ name, count })).sort((a, b) => b.count - a.count);
+  }, [dramas]);
 
-  // Fetch dramas on mount
   useEffect(() => {
     const fetchDramas = async () => {
       try {
@@ -162,7 +161,7 @@ export default function App() {
     
     if (user && user.status !== 'Pro') {
       if (user.limit <= 0) {
-        alert('Limit nonton Anda sudah habis! Silahkan hubungi admin untuk Top Up Limit / Upgrade Pro.');
+        setShowLockModal(true);
         return;
       }
       // Decrement
@@ -183,6 +182,7 @@ export default function App() {
     }
 
     setActiveEpisode(epInfo.ep);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
     setErrorStatus(false);
     setIsPlaying(false);
     setStatusMessage(`Mengambil kunci akses untuk Episode ${epInfo.ep}...`);
@@ -220,6 +220,7 @@ export default function App() {
 
   const selectDrama = async (drama: Drama) => {
     setActiveDrama(drama);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
     setActiveEpisode(null);
     setEpisodes([]);
     setIsPlaying(false);
@@ -254,6 +255,18 @@ export default function App() {
       setStatusMessage('Error koneksi ke server untuk memuat episode.');
     } finally {
       setIsLoadingEpisodes(false);
+    }
+  };
+
+  const handleVideoEnded = () => {
+    if (activeEpisode !== null && episodes.length > 0) {
+      const currentIndex = episodes.findIndex(e => e.ep === activeEpisode);
+      if (currentIndex !== -1 && currentIndex + 1 < episodes.length) {
+        const nextEp = episodes[currentIndex + 1];
+        playVideo(nextEp);
+      } else {
+        setStatusMessage('Semua episode telah diputar.');
+      }
     }
   };
 
@@ -375,6 +388,42 @@ export default function App() {
   return (
     <div className="min-h-screen bg-slate-950 text-slate-50 font-sans pb-20">
       {/* Name Input Modal */}
+      {showLockModal && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-950/80 backdrop-blur-sm p-4">
+          <div className="bg-slate-900 border border-white/10 rounded-2xl p-8 max-w-sm w-full shadow-2xl animate-in fade-in zoom-in-95 duration-300">
+            <div className="flex justify-center mb-6">
+              <div className="w-16 h-16 bg-gradient-to-br from-red-500 to-amber-700 rounded-full flex items-center justify-center p-1 shadow-lg shadow-red-500/20">
+                 <div className="w-full h-full bg-slate-900 rounded-full flex items-center justify-center">
+                   <Lock className="w-8 h-8 text-red-500" />
+                 </div>
+              </div>
+            </div>
+            <h2 className="text-xl font-serif font-bold text-center mb-2">Akses Terkunci</h2>
+            <p className="text-sm text-slate-400 text-center mb-6">Limit nonton Anda habis atau ini adalah episode premium. Silakan hubungi admin untuk Top Up Limit atau Upgrade Pro.</p>
+            
+            {qrCodePath ? (
+              <div className="mb-6 flex flex-col items-center">
+                <div className="bg-white p-2 rounded-xl">
+                  <img src={qrCodePath} alt="QR Code" className="w-48 h-48 object-cover rounded-lg" />
+                </div>
+                <p className="text-xs text-slate-500 mt-2">Scan QR untuk Top Up</p>
+              </div>
+            ) : (
+              <div className="mb-6 w-full h-32 border-2 border-dashed border-white/10 rounded-xl flex items-center justify-center text-slate-500 text-sm">
+                QR Belum Tersedia
+              </div>
+            )}
+            
+            <button 
+              onClick={() => setShowLockModal(false)}
+              className="w-full bg-slate-800 text-white font-bold py-3 rounded-xl hover:bg-slate-700 transition-colors border border-white/10"
+            >
+              Tutup
+            </button>
+          </div>
+        </div>
+      )}
+
       {showLoginModal && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-950/80 backdrop-blur-sm p-4">
           <div className="bg-slate-900 border border-white/10 rounded-2xl p-8 max-w-sm w-full shadow-2xl animate-in fade-in zoom-in-95 duration-300">
@@ -600,7 +649,7 @@ export default function App() {
                         Kategori Drama
                       </h2>
                       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
-                        {categories.map((cat, idx) => (
+                        {dynamicCategories.map((cat, idx) => (
                           <div 
                             key={idx} 
                             onClick={() => setSelectedCategory(cat)}
@@ -626,8 +675,7 @@ export default function App() {
                       </div>
                       
                       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3 md:gap-6">
-                        {/* Mock the list by reversing and slicing or filtering by random length based on index */}
-                        {[...dramas].sort((a, b) => a.title.localeCompare(b.title)).slice(0, 10 + (selectedCategory.name.length % 15)).map((drama, idx) => (
+                        {dramas.filter(d => (d.category || 'Lainnya') === selectedCategory.name).map((drama, idx) => (
                            <div 
                              key={`cat-drama-${idx}`} 
                              onClick={() => selectDrama(drama)}
@@ -709,6 +757,7 @@ export default function App() {
                   controls
                   playsInline
                   autoPlay
+                  onEnded={handleVideoEnded}
                   referrerPolicy="no-referrer"
                   className="w-full h-full object-contain relative z-10"
                   poster={activeDrama?.thumbnail} 
@@ -738,22 +787,33 @@ export default function App() {
                    </div>
                 ) : episodes.length > 0 ? (
                    <div className="flex overflow-x-auto snap-x snap-mandatory custom-scrollbar gap-2 pb-2">
-                     {episodes.map((ep) => {
+                     {episodes.map((ep, idx) => {
                         const isActive = activeEpisode === ep.ep;
+                        const isLocked = user && user.status !== 'Pro' && idx >= 5;
                         return (
                           <div 
                             key={ep.ep}
-                            onClick={() => playVideo(ep)}
+                            onClick={() => {
+                               if (isLocked && user?.limit <= 0) {
+                                  setShowLockModal(true);
+                               } else {
+                                  playVideo(ep);
+                               }
+                            }}
                             className={cn(
                               "snap-start shrink-0 flex items-center justify-center cursor-pointer transition-all rounded-xl border relative overflow-hidden group font-semibold",
                               "w-16 h-12 md:w-20 md:h-14",
                               isActive 
                                 ? "bg-primary text-slate-950 border-primary shadow-[0_0_15px_rgba(234,179,8,0.2)]" 
+                                : isLocked
+                                ? "bg-slate-800/80 text-slate-500 border-white/5 opacity-80"
                                 : "bg-slate-800 text-slate-300 border-white/5 hover:bg-slate-700 hover:text-white"
                             )}
                           >
                             {isActive ? (
                                <Play className="w-4 h-4 fill-slate-950" />
+                            ) : isLocked ? (
+                               <div className="flex items-center gap-1"><span className="text-xs">{ep.ep}</span><Lock className="w-3 h-3 text-red-400" /></div>
                             ) : (
                                <span>{ep.ep}</span>
                             )}

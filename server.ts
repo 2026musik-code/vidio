@@ -4,6 +4,20 @@ import path from 'path';
 import md5 from 'crypto-js/md5.js';
 import fs from 'fs';
 import multer from 'multer';
+import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
+import dotenv from 'dotenv';
+
+dotenv.config();
+
+// R2 Storage Setup (Optional)
+const r2Client = process.env.R2_ENDPOINT ? new S3Client({
+  region: 'auto',
+  endpoint: process.env.R2_ENDPOINT,
+  credentials: {
+    accessKeyId: process.env.R2_ACCESS_KEY_ID || '',
+    secretAccessKey: process.env.R2_SECRET_ACCESS_KEY || '',
+  },
+}) : null;
 
 // Storage Setup
 const dataFile = path.join(process.cwd(), 'data.json');
@@ -25,7 +39,8 @@ const uploadDir = path.join(process.cwd(), 'uploads');
 if (!fs.existsSync(uploadDir)) {
   fs.mkdirSync(uploadDir);
 }
-const upload = multer({ dest: path.join(process.cwd(), 'uploads/') });
+// Use memory storage to be able to upload to R2
+const upload = multer({ storage: multer.memoryStorage() });
 
 
 async function startServer() {
@@ -133,16 +148,39 @@ async function startServer() {
     }
   });
 
-  app.post('/api/admin/upload-qr', checkAdmin, upload.single('qrimage'), (req, res) => {
+  app.post('/api/admin/upload-qr', checkAdmin, upload.single('qrimage'), async (req, res) => {
     if (req.file) {
-      // Create a nice file name and rename
-      const ext = path.extname(req.file.originalname) || '.png';
-      const filename = `qrcode-${Date.now()}${ext}`;
-      const newPath = path.join(process.cwd(), 'uploads', filename);
-      fs.renameSync(req.file.path, newPath);
-      appData.qrCodePath = `/uploads/${filename}`;
-      saveData();
-      res.json({ path: appData.qrCodePath });
+      try {
+        const ext = path.extname(req.file.originalname) || '.png';
+        const filename = `qrcode-${Date.now()}${ext}`;
+
+        if (r2Client && process.env.R2_BUCKET_NAME) {
+          // Upload to R2
+          await r2Client.send(new PutObjectCommand({
+            Bucket: process.env.R2_BUCKET_NAME,
+            Key: filename,
+            Body: req.file.buffer,
+            ContentType: req.file.mimetype,
+          }));
+          
+          const publicUrl = process.env.R2_PUBLIC_URL 
+            ? `${process.env.R2_PUBLIC_URL}/${filename}`
+            : `https://${process.env.R2_BUCKET_NAME}.r2.dev/${filename}`;
+  
+          appData.qrCodePath = publicUrl;
+        } else {
+          // Fallback to local
+          const newPath = path.join(process.cwd(), 'uploads', filename);
+          fs.writeFileSync(newPath, req.file.buffer);
+          appData.qrCodePath = `/uploads/${filename}`;
+        }
+
+        saveData();
+        res.json({ path: appData.qrCodePath });
+      } catch (e: any) {
+        console.error('Upload error:', e);
+        res.status(500).json({ error: 'Failed to upload QR code' });
+      }
     } else {
       res.status(400).json({ error: 'No file uploaded' });
     }
@@ -153,53 +191,63 @@ async function startServer() {
   // ==========================================
   app.get('/api/dramas', async (req, res) => {
     try {
-      const response = await fetch('https://www.flickreels.net/', {
-        headers: { 'User-Agent': 'Mozilla/5.0 (Linux; Android 10; K)' }
-      });
-      const html = await response.text();
-      
-      const dramas: any[] = [];
-      // Cari semua anchor tag yang memiliki href ke /playlist/
-      const regex = /<a[^>]*href="\/playlist\/([a-zA-Z0-9-]+)\/(\d+)\/episode-1"[^>]*>([\s\S]*?)<\/a>/g;
-      
-      let match;
-      while ((match = regex.exec(html)) !== null) {
-        const slug = match[1];
-        const playlet_id = match[2];
-        const innerHTML = match[3];
-        
-        // Coba parser judul dan thumbnail dari inner HTML
-        const imgRegex = /<img[^>]*src="([^"]+)"[^>]*alt="image-([^"]*)"/i;
-        const imgMatch = innerHTML.match(imgRegex);
-        
-        // Prevent duplicates
-        if (!dramas.some(d => d.playlet_id === playlet_id)) {
-          if (imgMatch) {
-            let thumb = imgMatch[1];
-            // hapus query string parameter x-oss-process jika ada agar kualitas gambar bagus
-            thumb = thumb.split('?')[0]; 
-            let title = imgMatch[2].trim();
-            // Decode basic HTML entities
-            title = title.replace(/&#39;/g, "'").replace(/&amp;/g, "&").replace(/&quot;/g, '"');
+      const sources = [
+        { url: 'https://www.flickreels.net/', category: 'Trending' },
+        { url: 'https://www.flickreels.net/classify/romance/1500/1', category: 'Romance' },
+        { url: 'https://www.flickreels.net/classify/ceo-billionaire/1579/1', category: 'CEO / Billionaire' },
+        { url: 'https://www.flickreels.net/classify/avenge/1556/1', category: 'Avenge' },
+        { url: 'https://www.flickreels.net/classify/timetravel/1798/1', category: 'Time Travel' },
+        { url: 'https://www.flickreels.net/classify/flash-marriage/1742/1', category: 'Flash Marriage' },
+        { url: 'https://www.flickreels.net/classify/feel-good/2280/1', category: 'Feel-Good' },
+        { url: 'https://www.flickreels.net/classify/urban/1460/1', category: 'Urban' },
+        { url: 'https://www.flickreels.net/classify/drama/1886/1', category: 'Drama' },
+        { url: 'https://www.flickreels.net/classify/ancient-asian/1468/1', category: 'Asian' },
+      ];
+
+      const fetchSource = async (source: {url: string, category: string}) => {
+        try {
+          const response = await fetch(source.url, {
+            headers: { 'User-Agent': 'Mozilla/5.0 (Linux; Android 10; K)' }
+          });
+          const html = await response.text();
+          const items: any[] = [];
+          const regex = /<a[^>]*href="\/playlist\/([a-zA-Z0-9-]+)\/(\d+)\/episode-1"[^>]*>([\s\S]*?)<\/a>/g;
+          let match;
+          while ((match = regex.exec(html)) !== null) {
+            const slug = match[1];
+            const playlet_id = match[2];
+            const innerHTML = match[3];
             
-            dramas.push({
-              slug,
-              playlet_id,
-              title,
-              thumbnail: thumb
-            });
-          } else {
-            // Fallback
-             dramas.push({
-              slug,
-              playlet_id,
-              title: slug.replace(/-/g, ' ').toUpperCase(),
-              thumbnail: "https://images.unsplash.com/photo-1536440136628-849c177e76a1?auto=format&fit=crop&q=80&h=300"
-            });
+            const imgRegex = /<img[^>]*src="([^"]+)"[^>]*alt="image-([^"]*)"/i;
+            const imgMatch = innerHTML.match(imgRegex);
+            
+            if (imgMatch) {
+              let thumb = imgMatch[1].split('?')[0]; 
+              let title = imgMatch[2].trim().replace(/&#39;/g, "'").replace(/&amp;/g, "&").replace(/&quot;/g, '"');
+              items.push({ slug, playlet_id, title, thumbnail: thumb, category: source.category });
+            } else {
+              items.push({ slug, playlet_id, title: slug.replace(/-/g, ' ').toUpperCase(), thumbnail: "https://images.unsplash.com/photo-1536440136628-849c177e76a1?auto=format&fit=crop&q=80&h=300", category: source.category });
+            }
+          }
+          return items;
+        } catch (e) {
+          return [];
+        }
+      };
+
+      const results = await Promise.all(sources.map(fetchSource));
+      const dramas: any[] = [];
+      const seenIds = new Set();
+      
+      for (const list of results) {
+        for (const item of list) {
+          if (!seenIds.has(item.playlet_id)) {
+            seenIds.add(item.playlet_id);
+            dramas.push(item);
           }
         }
       }
-      
+
       res.json({ dramas });
     } catch (error) {
       console.error('Scraping error:', error);
