@@ -1,4 +1,4 @@
-name = "flickreels-clone"
+name = "vidio"
 main = "worker.ts"
 compatibility_date = "2024-03-29"
 
