@@ -346,7 +346,13 @@ app.get('/api/proxy-m3u8', async (c) => {
     const targetUrl = c.req.query('url');
     if (!targetUrl) return c.text('Missing url parameter', 400);
 
-    const response = await fetch(targetUrl);
+    const response = await fetch(targetUrl, {
+      headers: {
+        'Origin': 'https://www.flickreels.net',
+        'Referer': 'https://www.flickreels.net/',
+      }
+    });
+    
     if (!response.ok) return c.text('Failed to fetch M3U8', response.status as any);
 
     const m3u8Text = await response.text();
@@ -356,11 +362,17 @@ app.get('/api/proxy-m3u8', async (c) => {
     
     const rewrittenM3u8 = m3u8Text.split('\n').map(line => {
       const t = line.trim();
-      if (t.endsWith('.ts')) {
-        if (t.startsWith('http')) {
-          return t.includes('?') ? t : t + queryParams;
+      if (t && !t.startsWith('#')) {
+        let absoluteUrl = t;
+        if (!t.startsWith('http')) {
+          absoluteUrl = baseUrl + t;
         }
-        return baseUrl + t + queryParams;
+        if (!absoluteUrl.includes('?')) {
+          absoluteUrl += queryParams;
+        }
+        const isM3u8 = absoluteUrl.includes('.m3u8');
+        const endpoint = isM3u8 ? '/api/proxy-m3u8' : '/api/proxy-stream';
+        return `${endpoint}?url=${encodeURIComponent(absoluteUrl)}`;
       }
       return line;
     }).join('\n');
@@ -369,6 +381,33 @@ app.get('/api/proxy-m3u8', async (c) => {
       'Content-Type': 'application/vnd.apple.mpegurl',
       'Access-Control-Allow-Origin': '*',
       'Cache-Control': 'no-cache'
+    });
+  } catch (error) {
+    return c.text('Internal Server Error', 500);
+  }
+});
+
+app.get('/api/proxy-stream', async (c) => {
+  try {
+    const targetUrl = c.req.query('url');
+    if (!targetUrl) return c.text('Missing url parameter', 400);
+
+    const res = await fetch(targetUrl, {
+      headers: {
+        'Origin': 'https://www.flickreels.net',
+        'Referer': 'https://www.flickreels.net/',
+        'User-Agent': c.req.header('user-agent') || 'Mozilla/5.0'
+      }
+    });
+
+    if (!res.ok) return c.text('Failed to fetch stream chunk', res.status as any);
+
+    const newHeaders = new Headers(res.headers);
+    newHeaders.set('Access-Control-Allow-Origin', '*');
+
+    return new Response(res.body, {
+      status: res.status,
+      headers: newHeaders
     });
   } catch (error) {
     return c.text('Internal Server Error', 500);

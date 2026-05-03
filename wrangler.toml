@@ -10,12 +10,12 @@ binding = "ASSETS"
 # Simpan data user dan setting di Cloudflare KV
 [[kv_namespaces]]
 binding = "DATA_KV"
-id = "36f15344f03d4beaadef448b2ad6a423"
+id = "GANTI_DENGAN_KV_NASESPACE_ID_ANDA"
 
 # Simpan upload file QR di Cloudflare R2
 [[r2_buckets]]
 binding = "QR_BUCKET"
-bucket_name = "reels-bucket"
+bucket_name = "flickreels-bucket"
 
 [vars]
 # Optional, buka R2 agar bisa diakses public:
